@@ -17,13 +17,11 @@ gpio.setmode(gpio.BCM)
 gpio.setup(4, gpio.IN)
 
 
-#  Globals for Production
+#  Slack web link:
 slack = slackweb.Slack(url="xxxxxx")
 
-#  Globals for Test - This is for messages directly into TonkaToy
-#  slack = slackweb.Slack(url="xxxxxx")
-
 light_count = 0
+light_start = 0
 
 
 #  setup logging
@@ -224,9 +222,14 @@ out and return brewing is in progress.
 
 
 def brew_light_counter(light_value):
-    global light_count
-    light_count += 1
-    print("light_count:%s, light_value:%s" % light_count, light_value)
+    global light_count, light_start
+    if light_count == 0:
+        light_start = int(time.time())
+        light_count += 1
+        print("Started Blinking: light_count:%s, light_value:%s" % light_count, light_value)
+    else:
+        light_count += 1
+        print("light_count:%s, light_value:%s" % light_count, light_value)
 
 
 """
@@ -238,7 +241,7 @@ gpio.add_event_detect(4, gpio.RISING, callback=brew_light_counter, bouncetime=30
 
 
 def brew_watch():
-    global light_count
+    global light_count, light_start
     pot_count, brew_start, brewing = read_current_brewing_file()
     light_count_check = 0
 
@@ -250,9 +253,22 @@ def brew_watch():
             print('Not Brewing: -------- Pot Count: %s Not Brewing Check: %s Brewing?: %s'
                   % (pot_count, current_epoch, brewing))
             sleep(2)
-            # light_count = 1
+            light_start = current_epoch
+            light_count = 1
 
-        elif (light_count > 0) and (light_count_check < light_count) and (brewing is False):
+        elif light_count <= 20:
+            current_epoch = int(time.time())
+            light_duration = (current_epoch - light_start)
+            print('Waiting to notify: -------- LIght Count: %s light start: %s Duration: %s'
+                  % (light_count, light_start, light_duration))
+            if light_duration > 10:
+                light_count = 0
+                light_start = 0
+            else:
+                sleep(.3)
+                light_count += 1
+
+        elif (light_count > 20) and (light_count_check < light_count) and (brewing is False):
             pot_count, brew_update, brewing = update_current_brewing_file(pot_count)
             light_count_check = light_count
             slack_send_message('started_brewing', pot_count)
@@ -260,7 +276,7 @@ def brew_watch():
                   % (pot_count, brew_update, brewing))
             sleep(5)
 
-        elif (light_count > 0) and (light_count_check < light_count) and (brewing is True):
+        elif (light_count > 20) and (light_count_check < light_count) and (brewing is True):
             light_count_check = light_count
             sleep(5)
 
@@ -271,6 +287,7 @@ def brew_watch():
                   % (pot_count, brew_end, brewing))
             light_count = 0
             light_count_check = 0
+            light_start = 0
             sleep(5)
 
         else:
